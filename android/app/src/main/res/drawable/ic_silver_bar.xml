@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Silver bar with 3D effect -->
+    <!-- Main bar body -->
+    <path
+        android:fillColor="#C0C0C0"
+        android:pathData="M3,18 L7,6 L21,6 L21,18 Z"/>
+    <!-- Top face (lighter silver) -->
+    <path
+        android:fillColor="#E8E8E8"
+        android:pathData="M7,6 L11,2 L21,2 L21,6 Z"/>
+    <!-- Shine highlight -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M8,5 L10,3 L18,3 L16,5 Z"/>
+    <!-- Front face gradient effect -->
+    <path
+        android:fillColor="#D3D3D3"
+        android:pathData="M3,18 L7,6 L19,6 L19,16 L5,16 Z"/>
+    <!-- Bottom edge -->
+    <path
+        android:fillColor="#A9A9A9"
+        android:pathData="M3,18 L5,16 L19,16 L21,18 Z"/>
+</vector>

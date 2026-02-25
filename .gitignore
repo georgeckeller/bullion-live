@@ -1,0 +1,28 @@
+# Android build artifacts
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+
+# Test output
+tests/test_output.txt
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+
+# Secrets & credentials
+*.jks
+*.keystore
+
+# Test dependencies & coverage
+tests/node_modules/
+tests/coverage/
+
+# Archives
+*.tar.gz

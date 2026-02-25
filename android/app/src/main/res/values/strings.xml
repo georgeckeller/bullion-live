@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Bullion Live</string>
+    <string name="widget_desc">Gold, Silver, BTC, ETH prices</string>
+    <string name="widget_goog_description">GOOG stock price widget</string>
+</resources>

@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self';
+             script-src 'self' 'unsafe-inline';
+             style-src 'self' 'unsafe-inline';
+             connect-src https://data-asg.goldprice.org https://finnhub.io https://data-api.swissquote.com;
+             img-src 'self';
+             font-src 'self';">
+  <title>Bullion Live</title>
+  <style>
+    :root {
+      --bg: #000000;
+      --surface: #0a0a0a;
+      --text: #f0f0f0;
+      --muted: #9e9e9e;
+      --dim: #666666;
+      --green: #00e676;
+      --red: #ff5252;
+      --yellow: #ffd600;
+      --border: #1a1a1a;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .tabs {
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      padding: 16px;
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      z-index: 100;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab {
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.15em;
+      color: var(--muted);
+      text-transform: uppercase;
+      cursor: pointer;
+      padding: 8px 0;
+      border: none;
+      background: none;
+      position: relative;
+      transition: color 0.2s;
+    }
+
+    .tab:hover, .tab.active { color: var(--text); }
+
+    .tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--text);
+    }
+
+    .page {
+      display: none;
+      padding: 24px;
+      max-width: 500px;
+      margin: 0 auto;
+    }
+
+    .page.active { display: block; }
+
+    .page-title {
+      font-size: 1.75rem;
+      font-weight: 300;
+      letter-spacing: 0.1em;
+      margin-bottom: 40px;
+      text-align: center;
+    }
+
+    .card-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .asset-card {
+      width: 100%;
+      max-width: 400px;
+      margin-bottom: 48px;
+      text-align: center;
+    }
+
+    .asset-bar {
+      height: 3px;
+      width: 100%;
+      margin-bottom: 20px;
+      opacity: 0.9;
+      transition: background 0.3s;
+    }
+
+    .asset-bar.positive { background: var(--green); }
+    .asset-bar.negative { background: var(--red); }
+    .asset-bar.neutral { background: var(--muted); }
+    .asset-bar.loading { background: var(--dim); animation: pulse 1s ease-in-out infinite; }
+    .asset-bar.warning { background: var(--yellow); }
+
+    .asset-name {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .asset-price {
+      font-size: 2.25rem;
+      font-weight: 300;
+      margin-bottom: 8px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .asset-price.loading { color: var(--dim); }
+    .asset-price.error { color: var(--red); font-size: 1rem; }
+
+    .asset-change {
+      font-size: 0.9rem;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .asset-change.positive { color: var(--green); }
+    .asset-change.negative { color: var(--red); }
+    .asset-change.neutral { color: var(--muted); }
+
+    .markets-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .markets-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .markets-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    .icon-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+
+    .icon-btn:hover {
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    .icon-btn:active { transform: scale(0.95); }
+
+    .icon-btn.reset-btn {
+      font-size: 12px;
+      padding: 4px 6px;
+      opacity: 0.4;
+    }
+
+    .icon-btn.reset-btn:hover {
+      opacity: 1;
+      border-color: var(--yellow);
+      color: var(--yellow);
+    }
+
+    .sort-arrow { transition: transform 0.2s; }
+    .icon-btn.desc .sort-arrow { transform: rotate(180deg); }
+
+    .ticker-list { display: flex; flex-direction: column; }
+
+    .ticker-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ticker-row:last-child { border-bottom: none; }
+
+    .ticker-row.index-fund {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .ticker-divider-hashed {
+      height: 1px;
+      margin: 8px 0;
+      background-image: repeating-linear-gradient(
+        to right,
+        var(--red) 0px,
+        var(--red) 4px,
+        transparent 4px,
+        transparent 8px
+      );
+      opacity: 0.6;
+    }
+
+    .ticker-info { display: flex; align-items: center; gap: 10px; }
+
+    .ticker-delete {
+      background: transparent;
+      border: none;
+      color: var(--dim);
+      cursor: pointer;
+      padding: 4px;
+      font-size: 12px;
+      opacity: 0.4;
+      transition: all 0.2s;
+    }
+
+    .ticker-delete:hover { opacity: 1; color: var(--red); }
+
+    .ticker-symbol {
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+    }
+
+    .ticker-price {
+      font-size: 14px;
+      text-align: right;
+      min-width: 80px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .ticker-change {
+      font-size: 13px;
+      font-weight: 600;
+      text-align: right;
+      min-width: 75px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .ticker-change.positive { color: var(--green); }
+    .ticker-change.negative { color: var(--red); }
+    .ticker-change.neutral { color: var(--muted); }
+
+    .ticker-loading {
+      text-align: center;
+      padding: 48px;
+      color: var(--dim);
+    }
+
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.9);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      overflow: hidden;
+    }
+
+    .modal-overlay.visible {
+      display: flex;
+    }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      width: 100%;
+      max-width: 320px;
+      max-height: 60vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .modal-title {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      margin-bottom: 20px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .modal-input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      color: var(--text);
+      font-size: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 20px;
+    }
+
+    .modal-input:focus {
+      outline: none;
+      border-color: var(--green);
+    }
+
+    .modal-input::placeholder {
+      color: var(--dim);
+      text-transform: none;
+      letter-spacing: normal;
+    }
+
+    .modal-buttons { display: flex; gap: 12px; }
+
+    .modal-btn {
+      flex: 1;
+      padding: 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .modal-btn-cancel {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .modal-btn-add {
+      background: var(--green);
+      border: none;
+      color: #000;
+    }
+
+    .modal-btn:active { transform: scale(0.98); }
+
+    .modal-error {
+      color: var(--red);
+      font-size: 12px;
+      margin: -12px 0 16px;
+      text-align: center;
+      display: none;
+    }
+
+    .modal-error.visible { display: block; }
+
+    .ticker-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+      overflow-y: auto;
+      flex: 0 1 auto;
+      max-height: none;
+    }
+
+    .ticker-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .ticker-chip .remove {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    .ticker-chip .remove:hover { color: var(--red); }
+
+    .modal-close {
+      width: 100%;
+      margin-top: 12px;
+      padding: 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .modal-close:hover {
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: var(--dim);
+      font-size: 11px;
+      margin-top: 32px;
+      letter-spacing: 0.05em;
+      flex-direction: column;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--dim);
+    }
+
+    .status-dot.live { background: var(--green); animation: blink 2s infinite; }
+    .status-dot.error { background: var(--red); }
+    .status-dot.warning { background: var(--yellow); }
+
+    .status-timestamp {
+      font-size: 10px;
+      color: var(--dim);
+      margin-top: 4px;
+    }
+
+    @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.7; } }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  </style>
+</head>
+<body>
+  <nav class="tabs">
+    <button class="tab active" data-page="metals">Metals</button>
+    <button class="tab" data-page="crypto">Crypto</button>
+    <button class="tab" data-page="markets">Markets</button>
+  </nav>
+
+  <main class="page active" id="metals">
+    <div class="card-container">
+      <h1 class="page-title">BULLION LIVE</h1>
+
+      <article class="asset-card" data-asset="gold">
+        <div class="asset-bar loading"></div>
+        <div class="asset-name">Gold (XAU/USD)</div>
+        <div class="asset-price loading">---.--</div>
+        <div class="asset-change neutral">
+          <span class="change-value">--</span>
+        </div>
+      </article>
+
+      <article class="asset-card" data-asset="silver">
+        <div class="asset-bar loading"></div>
+        <div class="asset-name">Silver (XAG/USD)</div>
+        <div class="asset-price loading">---.--</div>
+        <div class="asset-change neutral">
+          <span class="change-value">--</span>
+        </div>
+      </article>
+
+      <div class="status" id="metals-status">
+        <div class="status-row">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting...</span>
+        </div>
+        <span class="status-timestamp"></span>
+      </div>
+    </div>
+  </main>
+
+  <main class="page" id="crypto">
+    <div class="card-container">
+      <h1 class="page-title">CRYPTO LIVE</h1>
+
+      <article class="asset-card" data-asset="btc">
+        <div class="asset-bar loading"></div>
+        <div class="asset-name">Bitcoin (BTC/USD)</div>
+        <div class="asset-price loading">---.--</div>
+        <div class="asset-change neutral">
+          <span class="change-value">--</span>
+        </div>
+      </article>
+
+      <article class="asset-card" data-asset="eth">
+        <div class="asset-bar loading"></div>
+        <div class="asset-name">Ethereum (ETH/USD)</div>
+        <div class="asset-price loading">---.--</div>
+        <div class="asset-change neutral">
+          <span class="change-value">--</span>
+        </div>
+      </article>
+
+      <div class="status" id="crypto-status">
+        <div class="status-row">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting...</span>
+        </div>
+        <span class="status-timestamp"></span>
+      </div>
+    </div>
+  </main>
+
+  <main class="page" id="markets">
+    <header class="markets-header">
+      <span class="markets-title">Watchlist</span>
+      <div class="markets-controls">
+        <button class="icon-btn" id="sortBtn" title="Sort by change">
+          <span class="sort-arrow">▲</span>
+        </button>
+        <button class="icon-btn" id="manageBtn" title="Manage watchlist">☰</button>
+      </div>
+    </header>
+    <div class="ticker-list" id="tickerList">
+      <div class="ticker-loading">Loading...</div>
+    </div>
+    <div class="status" id="markets-status">
+      <div class="status-row">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting...</span>
+      </div>
+      <span class="status-timestamp"></span>
+    </div>
+  </main>
+
+  <div class="modal-overlay" id="modal">
+    <div class="modal">
+      <div class="modal-title">MANAGE WATCHLIST</div>
+      <div class="ticker-chips" id="tickerChips"></div>
+      <input type="text" class="modal-input" id="tickerInput"
+             placeholder="Add symbol (e.g., META)" maxlength="10" autocomplete="off">
+      <div class="modal-error" id="tickerError"></div>
+      <div class="modal-buttons">
+        <button class="modal-btn modal-btn-cancel" id="resetBtn">Reset</button>
+        <button class="modal-btn modal-btn-add" id="confirmBtn">Add</button>
+      </div>
+      <button class="modal-close" id="closeModalBtn">Done</button>
+    </div>
+  </div>
+
+  <script src="index.js"></script>
+</body>
+</html>

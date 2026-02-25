@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <application
+        android:usesCleartextTraffic="false"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.BullionLive">
+        <activity 
+            android:name=".MainActivity" 
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <receiver android:name=".widget.MetalsWidgetProvider" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.bullionlive.widget.MetalsWidgetProvider.CLICK_METALS"/>
+                <action android:name="com.bullionlive.widget.MetalsWidgetProvider.CLICK_CRYPTO"/>
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info"/>
+        </receiver>
+        <receiver android:name=".widget.SingleStockWidgetProvider" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.bullionlive.widget.SingleStockWidgetProvider.CLICK_STOCK"/>
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_single_stock_info"/>
+        </receiver>
+        
+        <receiver android:name=".FetchReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="com.bullionlive.ACTION_FETCH_DATA"/>
+            </intent-filter>
+        </receiver>
+        
+        <service
+            android:name=".FetchService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false"/>
+            
+    </application>
+</manifest>
