@@ -1,6 +1,7 @@
 package com.bullionlive.data
 
 import android.util.Log
+import com.bullionlive.BuildConfig
 import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
@@ -8,31 +9,32 @@ import org.json.JSONObject
 /**
  * GoldPriceApi - Precious metals price fetcher for Gold (XAU) and Silver (XAG)
  *
- * API ENDPOINT: https://data-asg.goldprice.org/dbXRates/USD
- * AUTH: None required (public API, CORS-friendly)
- * RATE LIMIT: Generous, no documented limit
+ * TWO-SOURCE STRATEGY (zero cost, no new registration):
  *
- * RESPONSE FORMAT:
- * {
- *   "ts": 1766261892257,
- *   "items": [{
- *     "curr": "USD",
- *     "xauPrice": 4340.105,    // Gold current price
- *     "xagPrice": 67.143,      // Silver current price
- *     "xauClose": 4332.145,    // Gold previous close
- *     "xagClose": 65.2865,     // Silver previous close
- *     "pcXau": 0.18,           // Gold change percent
- *     "pcXag": 2.84            // Silver change percent
- *   }]
- * }
+ * PRIMARY (spot price): Swissquote public forex feed
+ *   XAU: https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD
+ *   XAG: https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAG/USD
+ *   Response: [{ spreadProfilePrices: [{ bid: <USD/troy oz> }] }]
+ *   Auth: None. No rate limit documented. Very reliable.
  *
- * CACHING: 5-minute TTL using volatile companion object fields.
+ * DAILY CHANGE %: Finnhub GLD/SLV ETF quotes (existing free API key)
+ *   GLD = SPDR Gold Shares ETF, tracks spot gold with >99.9% daily correlation.
+ *   SLV = iShares Silver Trust ETF, tracks spot silver similarly.
+ *   We use dp (daily % change) ONLY — not the ETF price itself.
+ *   prevClose is back-calculated: spotPrice / (1 + dp/100)
+ *
+ * FALLBACK: Swissquote price-only (0% change shown in UI) if Finnhub fails.
+ *
+ * WHY NOT GoldPrice.org: It returned HTTP 403 after Cloudflare WAF was
+ * added in March 2026. All programmatic requests are blocked. No fix possible.
+ *
+ * CACHING: 1-minute fresh TTL via companion object fields.
  * Prevents duplicate API calls during widget refresh storms.
  *
  * ERROR HANDLING: Returns Result.failure() on network/parse errors.
- * Widget displays "Error" text and retries on next update cycle.
+ * Widget displays stale cache or "Error" text, retries on next cycle.
  *
- * USED BY: MetalsWidgetProvider, Web app metals tab
+ * USED BY: MetalsWidgetProvider, FetchReceiver, Web app metals tab
  */
 data class MetalsData(
     val goldPrice: Double,
@@ -84,10 +86,10 @@ class GoldPriceApi {
             return Result.success(cachedMetalsData!!)
         }
 
-        val requestKey = "goldprice:metals"
-        
-        // Check if request can be made (deduplication only)
-        if (!requestQueue.enqueue(requestKey, "goldprice")) {
+        val requestKey = "metals:swissquote"
+
+        // Deduplication: if another call is already in flight, use stale cache
+        if (!requestQueue.enqueue(requestKey, "swissquote")) {
             if (hasStaleCacheAvailable()) {
                 val cacheAge = getCacheAgeSeconds()
                 Log.w(TAG, "Using stale cache (${cacheAge}s old)")
@@ -96,80 +98,28 @@ class GoldPriceApi {
             return Result.failure(Exception("Request deduplicated, no stale cache"))
         }
 
-        var conn: HttpURLConnection? = null
         return try {
-            val url = URL(AppConfig.GOLDPRICE_URL)
-            conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = AppConfig.CONNECT_TIMEOUT_MS
-            conn.readTimeout = AppConfig.READ_TIMEOUT_MS
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("User-Agent", AppConfig.USER_AGENT)
-            conn.doInput = true
-
-            val responseCode = conn.responseCode
-
-            if (responseCode != 200) {
-                requestQueue.dequeue(requestKey)
-                // Try stale cache on HTTP error
-                if (hasStaleCacheAvailable()) {
-                    val cacheAge = getCacheAgeSeconds()
-                    Log.w(TAG, "HTTP $responseCode - using stale cache (${cacheAge}s old)")
-                    return Result.success(cachedMetalsData!!)
-                }
-                return Result.failure(Exception("HTTP $responseCode"))
+            val result = fetchMetalsInternal()
+            result.getOrNull()?.let {
+                cachedMetalsData = it
+                cacheTimestamp = System.currentTimeMillis()
             }
-
-            val json = conn.inputStream.bufferedReader().use { it.readText() }
-
-            val root = JSONObject(json)
-            val item = root.getJSONArray("items").getJSONObject(0)
-
-            val goldPrice = item.optDouble("xauPrice", 0.0)
-            val goldClose = item.optDouble("xauClose", goldPrice)
-            val goldPct = item.optDouble("pcXau", 0.0)
-
-            val silverPrice = item.optDouble("xagPrice", 0.0)
-            val silverClose = item.optDouble("xagClose", silverPrice)
-            val silverPct = item.optDouble("pcXag", 0.0)
-
-            // Validate prices - use stale cache if API returns invalid data
-            if (goldPrice <= 0 || silverPrice <= 0) {
-                Log.e(TAG, "Invalid prices: gold=$goldPrice, silver=$silverPrice")
-                requestQueue.dequeue(requestKey)
-                if (hasStaleCacheAvailable()) {
-                    val cacheAge = getCacheAgeSeconds()
-                    Log.w(TAG, "Using stale cache due to invalid prices (${cacheAge}s old)")
-                    return Result.success(cachedMetalsData!!)
-                }
-                return Result.failure(Exception("Invalid price data"))
-            }
-
-
-            val data = MetalsData(
-                goldPrice = goldPrice,
-                goldPreviousClose = goldClose,
-                goldChangePercent = goldPct,
-                silverPrice = silverPrice,
-                silverPreviousClose = silverClose,
-                silverChangePercent = silverPct
-            )
-            cachedMetalsData = data
-            cacheTimestamp = System.currentTimeMillis()
             requestQueue.dequeue(requestKey)
-            Result.success(data)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error: ${e.message}", e)
-            requestQueue.dequeue(requestKey)
-            // Fallback to stale cache on any exception
-            if (hasStaleCacheAvailable()) {
+            if (result.isFailure && hasStaleCacheAvailable()) {
                 val cacheAge = getCacheAgeSeconds()
                 Log.w(TAG, "Using stale cache after error (${cacheAge}s old)")
-                return Result.success(cachedMetalsData!!)
+                Result.success(cachedMetalsData!!)
+            } else {
+                result
             }
-            Result.failure(e)
-        } finally {
-            conn?.disconnect()
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchMetals error: ${e.message}", e)
+            requestQueue.dequeue(requestKey)
+            if (hasStaleCacheAvailable()) {
+                Result.success(cachedMetalsData!!)
+            } else {
+                Result.failure(e)
+            }
         }
     }
 
@@ -206,123 +156,117 @@ class GoldPriceApi {
     }
 
     /**
-     * Internal metals fetch with Swissquote fallback (used by fetchMetalsWithPersistence)
+     * Internal metals fetch: Swissquote spot price + Finnhub GLD/SLV daily change %.
+     * Mirrors JS fetchMetals() strategy so widget and web app stay in sync.
      */
     private fun fetchMetalsInternal(): Result<MetalsData> {
-        val requestKey = "goldprice:metals"
-        
-        // Try GoldPrice.org first
-        if (requestQueue.enqueue(requestKey, "goldprice")) {
-            val primaryResult = fetchGoldPriceOrg()
-            requestQueue.dequeue(requestKey)
-            
-            if (primaryResult.isSuccess) {
-                return primaryResult
-            }
-            Log.w(TAG, "GoldPrice.org failed: ${primaryResult.exceptionOrNull()?.message}, trying Swissquote fallback")
+        // Try primary: Swissquote + Finnhub GLD/SLV
+        val swissResult = fetchSwissquotePrices()
+        if (swissResult.isFailure) {
+            val err = swissResult.exceptionOrNull() ?: Exception("Swissquote failed")
+            Log.e(TAG, "Swissquote failed: ${err.message}")
+            return Result.failure(err)
         }
-        
-        // Try Swissquote fallback
-        return fetchSwissquote()
+
+        val (goldPrice, silverPrice) = swissResult.getOrNull()!!
+
+        // Try Finnhub GLD/SLV for daily change %; fall back gracefully if unavailable
+        val gldDp = fetchFinnhubDp(AppConfig.GLD_SYMBOL)
+        val slvDp = fetchFinnhubDp(AppConfig.SLV_SYMBOL)
+
+        // Back-calculate prevClose from spot price and ETF daily change %
+        val goldPrevClose = if (gldDp != null && Math.abs(gldDp) < 20.0) {
+            goldPrice / (1.0 + gldDp / 100.0)
+        } else {
+            goldPrice // 0% change shown if Finnhub unavailable
+        }
+        val goldChangePct = gldDp ?: 0.0
+
+        val silverPrevClose = if (slvDp != null && Math.abs(slvDp) < 20.0) {
+            silverPrice / (1.0 + slvDp / 100.0)
+        } else {
+            silverPrice
+        }
+        val silverChangePct = slvDp ?: 0.0
+
+        return Result.success(MetalsData(
+            goldPrice = goldPrice,
+            goldPreviousClose = goldPrevClose,
+            goldChangePercent = goldChangePct,
+            silverPrice = silverPrice,
+            silverPreviousClose = silverPrevClose,
+            silverChangePercent = silverChangePct
+        ))
     }
 
-    private fun fetchGoldPriceOrg(): Result<MetalsData> {
-        var conn: HttpURLConnection? = null
-        return try {
-            val url = URL(AppConfig.GOLDPRICE_URL)
-            conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = AppConfig.GOLDPRICE_TIMEOUT_MS
-            conn.readTimeout = AppConfig.GOLDPRICE_TIMEOUT_MS
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("User-Agent", AppConfig.USER_AGENT)
-            conn.doInput = true
-
-            val responseCode = conn.responseCode
-            if (responseCode != 200) {
-                return Result.failure(Exception("HTTP $responseCode"))
-            }
-
-            val json = conn.inputStream.bufferedReader().use { it.readText() }
-            
-            // Check if it's actually HTML (WAF challenge)
-            if (json.trim().startsWith("<html", ignoreCase = true)) {
-                return Result.failure(Exception("WAF challenge detected (HTML response)"))
-            }
-
-            val root = JSONObject(json)
-            val item = root.getJSONArray("items").getJSONObject(0)
-
-            val goldPrice = item.optDouble("xauPrice", 0.0)
-            val goldClose = item.optDouble("xauClose", goldPrice)
-            val goldPct = item.optDouble("pcXau", 0.0)
-
-            val silverPrice = item.optDouble("xagPrice", 0.0)
-            val silverClose = item.optDouble("xagClose", silverPrice)
-            val silverPct = item.optDouble("pcXag", 0.0)
-
-            if (goldPrice <= 0 || silverPrice <= 0) {
-                return Result.failure(Exception("Invalid price data"))
-            }
-
-            Result.success(MetalsData(goldPrice, goldClose, goldPct, silverPrice, silverClose, silverPct))
-        } catch (e: Exception) {
-            Result.failure(e)
-        } finally {
-            conn?.disconnect()
-        }
+    /** Fetch live XAU and XAG spot bid prices from Swissquote public forex feed. */
+    private fun fetchSwissquotePrices(): Result<Pair<Double, Double>> {
+        val goldPrice = fetchSwissquoteInstrument(AppConfig.SWISSQUOTE_XAU_URL) ?: return Result.failure(Exception("Swissquote XAU failed"))
+        val silverPrice = fetchSwissquoteInstrument(AppConfig.SWISSQUOTE_XAG_URL) ?: return Result.failure(Exception("Swissquote XAG failed"))
+        return Result.success(Pair(goldPrice, silverPrice))
     }
 
-    private fun fetchSwissquote(): Result<MetalsData> {
+    private fun fetchSwissquoteInstrument(url: String): Double? {
         var conn: HttpURLConnection? = null
         return try {
-            // Swissquote Public API - very reliable secondary source
-            val url = URL(AppConfig.SWISSQUOTE_URL)
-            conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = AppConfig.GOLDPRICE_TIMEOUT_MS
-            conn.readTimeout = AppConfig.GOLDPRICE_TIMEOUT_MS
+            conn = URL(url).openConnection() as HttpURLConnection
+            conn.connectTimeout = AppConfig.METALS_TIMEOUT_MS
+            conn.readTimeout = AppConfig.METALS_TIMEOUT_MS
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/json")
             conn.doInput = true
 
             if (conn.responseCode != 200) {
-                return Result.failure(Exception("Swissquote HTTP ${conn.responseCode}"))
+                Log.e(TAG, "Swissquote HTTP ${conn.responseCode} for $url")
+                return null
             }
 
             val json = conn.inputStream.bufferedReader().use { it.readText() }
             val array = org.json.JSONArray(json)
-            
-            var goldPrice = 0.0
-            var silverPrice = 0.0
-            
-            // Swissquote returns array of objects: [{symbol: "XAUUSD", bid: 123, ...}, ...]
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                val symbol = obj.getString("symbol")
-                if (symbol == "XAUUSD") goldPrice = obj.getDouble("bid")
-                if (symbol == "XAGUSD") silverPrice = obj.getDouble("bid")
-            }
-
-            if (goldPrice <= 0 || silverPrice <= 0) {
-                return Result.failure(Exception("Swissquote missing data"))
-            }
-
-            // Swissquote doesn't always provide prevClose, so we use 0.0 and let UI handle it 
-            // OR we calculate based on change if available (Swissquote usually lacks this)
-            // For now, we use a slightly different URL that includes historical data if needed
-            // but for a fast widget update, bid/ask is sufficient.
-            
-            Result.success(MetalsData(
-                goldPrice = goldPrice,
-                goldPreviousClose = goldPrice, // UI will show 0% change if close is same as price
-                goldChangePercent = 0.0,
-                silverPrice = silverPrice,
-                silverPreviousClose = silverPrice,
-                silverChangePercent = 0.0
-            ))
+            // Response: [{spreadProfilePrices: [{bid: <price>}]}]
+            array.getJSONObject(0)
+                .getJSONArray("spreadProfilePrices")
+                .getJSONObject(0)
+                .getDouble("bid")
+                .takeIf { it > 0 }
         } catch (e: Exception) {
-            Log.e("GoldPriceApi", "Swissquote fallback failed: ${e.message}")
-            Result.failure(e)
+            Log.e(TAG, "Swissquote fetch error for $url: ${e.message}")
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    /**
+     * Fetch daily change % from Finnhub for an ETF symbol (GLD or SLV).
+     * Returns null on failure — caller treats null as 0% change (price only mode).
+     */
+    private fun fetchFinnhubDp(symbol: String): Double? {
+        var conn: HttpURLConnection? = null
+        return try {
+            val apiKey = BuildConfig.FINNHUB_API_KEY
+            conn = URL("${AppConfig.FINNHUB_BASE_URL}?symbol=$symbol&token=$apiKey").openConnection() as HttpURLConnection
+            conn.connectTimeout = AppConfig.METALS_TIMEOUT_MS
+            conn.readTimeout = AppConfig.METALS_TIMEOUT_MS
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Accept", "application/json")
+            conn.doInput = true
+
+            if (conn.responseCode != 200) {
+                Log.w(TAG, "Finnhub $symbol HTTP ${conn.responseCode}")
+                return null
+            }
+
+            val json = conn.inputStream.bufferedReader().use { it.readText() }
+            val obj = JSONObject(json)
+            if (obj.has("error")) {
+                Log.w(TAG, "Finnhub $symbol error: ${obj.getString("error")}")
+                return null
+            }
+            obj.optDouble("dp", Double.NaN).takeIf { !it.isNaN() }
+        } catch (e: Exception) {
+            Log.w(TAG, "Finnhub $symbol fetch error: ${e.message}")
+            null
         } finally {
             conn?.disconnect()
         }

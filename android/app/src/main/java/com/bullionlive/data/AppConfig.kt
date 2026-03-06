@@ -14,14 +14,18 @@ package com.bullionlive.data
 object AppConfig {
 
     // ========== API Endpoints ==========
-    const val GOLDPRICE_URL = "https://data-asg.goldprice.org/dbXRates/USD"
-    const val SWISSQUOTE_URL = "https://data-api.swissquote.com/v1/quotes/forex/USD/XAU,XAG"
+    // Primary metals source: Swissquote public forex feed (live spot bid in USD/troy oz, no auth)
+    const val SWISSQUOTE_XAU_URL = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD"
+    const val SWISSQUOTE_XAG_URL = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAG/USD"
+    // Daily change %: Finnhub GLD/SLV ETF quotes via existing free key (>99.9% daily correlation to spot)
+    const val GLD_SYMBOL = "GLD"
+    const val SLV_SYMBOL = "SLV"
     const val FINNHUB_BASE_URL = "https://finnhub.io/api/v1/quote"
 
     // ========== Network ==========
     const val CONNECT_TIMEOUT_MS = 15000
     const val READ_TIMEOUT_MS = 15000
-    const val GOLDPRICE_TIMEOUT_MS = 8000
+    const val METALS_TIMEOUT_MS = 8000
     const val USER_AGENT = "BullionLive/1.0"
 
     // ========== Cache Durations ==========
