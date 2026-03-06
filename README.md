@@ -78,9 +78,12 @@ graph TD
         Cache[("SharedPreferences<br/>Persistent Cache")]:::cache
         Widgets["Home Screen Widgets"]:::ui
         
-        WebView <-->|JavascriptBridge| Native
-        Native <--> Cache
-        Widgets <--> Cache
+        WebView -->|JavascriptBridge| Native
+        Native --> WebView
+        Native --> Cache
+        Cache --> Native
+        Widgets --> Cache
+        Cache --> Widgets
     }
 
     subgraph "External APIs"
