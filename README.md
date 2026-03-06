@@ -65,7 +65,34 @@ A real-time financial asset tracker for Android delivering live prices for preci
 
 The app is a Kotlin Android shell wrapping a single-page HTML/JS/CSS app in a WebView. Native Kotlin handles background data fetching, persistent caching, home screen widgets, and rate limiting. The WebView handles all UI rendering.
 
-![Architecture](docs/architecture.png)
+```mermaid
+graph TD
+    classDef ui fill:#4a90e2,stroke:#000,stroke-width:2px,color:#fff
+    classDef native fill:#34a853,stroke:#000,stroke-width:2px,color:#fff
+    classDef api fill:#fbbc05,stroke:#000,stroke-width:2px,color:#000
+    classDef cache fill:#ea4335,stroke:#000,stroke-width:2px,color:#fff
+
+    subgraph "Bullion Live App (Android)"
+        WebView["WebView (UI)<br/>HTML/JS/CSS"]:::ui
+        Native["Native Shell<br/>Kotlin (Background)"]:::native
+        Cache[("SharedPreferences<br/>Persistent Cache")]:::cache
+        Widgets["Home Screen Widgets"]:::ui
+        
+        WebView <-->|JavascriptBridge| Native
+        Native <--> Cache
+        Widgets <--> Cache
+    }
+
+    subgraph "External APIs"
+        Swissquote["Swissquote<br/>(Live Spot Price)"]:::api
+        Yahoo["Yahoo Finance<br/>(Daily Change %)"]:::api
+        Finnhub["Finnhub<br/>(Crypto & Stocks)"]:::api
+    }
+
+    Native --> Swissquote
+    Native --> Yahoo
+    Native --> Finnhub
+```
 
 ```
 ┌─────────────────────────────────────────────────────────┐

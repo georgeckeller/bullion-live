@@ -17,7 +17,7 @@ import kotlin.concurrent.withLock
  *
  * RATE LIMITS:
  * - Finnhub: 60 calls/minute, 30 calls/second hard limit
- * - GoldPrice.org: No documented limit (generous)
+ * - Swissquote/Yahoo: No documented limit (generous)
  *
  * USAGE:
  * - Call enqueue() before making API request
@@ -63,7 +63,7 @@ class ApiRequestQueue private constructor() {
      */
     fun canMakeRequest(apiType: String = "finnhub"): Boolean {
         if (apiType != "finnhub") {
-            // GoldPrice.org has no documented limits
+            // Swissquote/Yahoo have no documented limits
             return true
         }
         

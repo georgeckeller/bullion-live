@@ -8,7 +8,7 @@ import org.json.JSONObject
  * ApiTest - API response parsing validation for all data sources
  *
  * TEST COVERAGE:
- * - Metals Tab: GoldPrice.org response parsing (4 tests)
+ * - Metals Tab: Swissquote response parsing (4 tests)
  * - Crypto Tab: Finnhub BTC/ETH response parsing (5 tests)
  * - Stocks Tab: Finnhub stock quote parsing (3 tests)
  * - Widget: Combined data validation and formatting (2 tests)
@@ -30,7 +30,7 @@ import org.json.JSONObject
 class ApiTest {
 
     @Test
-    fun metals_goldPriceOrg_parsesGoldPrice() {
+    fun metals_swissquote_parsesGoldPrice() {
         val json = """{"ts":1766261892257,"items":[{"curr":"USD","xauPrice":4340.105,"xagPrice":67.143,"xauClose":4332.145,"xagClose":65.2865}]}"""
         val root = JSONObject(json)
         val item = root.getJSONArray("items").getJSONObject(0)
@@ -42,7 +42,7 @@ class ApiTest {
     }
 
     @Test
-    fun metals_goldPriceOrg_parsesSilverPrice() {
+    fun metals_swissquote_parsesSilverPrice() {
         val json = """{"ts":1766261892257,"items":[{"curr":"USD","xauPrice":4340.105,"xagPrice":67.143,"xauClose":4332.145,"xagClose":65.2865}]}"""
         val root = JSONObject(json)
         val item = root.getJSONArray("items").getJSONObject(0)
@@ -54,7 +54,7 @@ class ApiTest {
     }
 
     @Test
-    fun metals_goldPriceOrg_parsesPreviousClose() {
+    fun metals_swissquote_parsesPreviousClose() {
         val json = """{"ts":1766261892257,"items":[{"curr":"USD","xauPrice":4340.105,"xagPrice":67.143,"xauClose":4332.145,"xagClose":65.2865}]}"""
         val root = JSONObject(json)
         val item = root.getJSONArray("items").getJSONObject(0)
@@ -67,7 +67,7 @@ class ApiTest {
     }
 
     @Test
-    fun metals_goldPriceOrg_handlesEmptyItems() {
+    fun metals_swissquote_handlesEmptyItems() {
         val json = """{"ts":1766261892257,"items":[]}"""
         val root = JSONObject(json)
         val items = root.getJSONArray("items")

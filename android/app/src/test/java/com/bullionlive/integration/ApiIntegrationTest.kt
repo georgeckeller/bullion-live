@@ -32,7 +32,7 @@ import org.junit.runners.MethodSorters
 class ApiIntegrationTest {
 
     // ========================================
-    // METALS API TESTS (GoldPrice.org)
+    // METALS API TESTS (Swissquote/Yahoo)
     // ========================================
 
     @Test

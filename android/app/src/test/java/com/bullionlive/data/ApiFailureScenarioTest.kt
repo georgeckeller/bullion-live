@@ -156,11 +156,11 @@ class ApiFailureScenarioTest {
     }
 
     // ========================================
-    // GOLDPRICE API SPECIFIC TESTS
+    // SWISSQUOTE API SPECIFIC TESTS
     // ========================================
 
     @Test
-    fun goldPriceApi_emptyItemsArray_shouldBeHandled() {
+    fun swissquoteApi_emptyItemsArray_shouldBeHandled() {
         val json = """{"ts":1766261892257,"items":[]}"""
         val root = JSONObject(json)
         val items = root.getJSONArray("items")
@@ -170,7 +170,7 @@ class ApiFailureScenarioTest {
     }
 
     @Test
-    fun goldPriceApi_missingItemsField_shouldThrow() {
+    fun swissquoteApi_missingItemsField_shouldThrow() {
         val json = """{"ts":1766261892257}"""
         val root = JSONObject(json)
 
@@ -183,7 +183,7 @@ class ApiFailureScenarioTest {
     }
 
     @Test
-    fun goldPriceApi_zeroGoldPrice_shouldBeRejected() {
+    fun swissquoteApi_zeroGoldPrice_shouldBeRejected() {
         val json = """{"items":[{"xauPrice":0,"xagPrice":67.143}]}"""
         val root = JSONObject(json)
         val item = root.getJSONArray("items").getJSONObject(0)
@@ -194,7 +194,7 @@ class ApiFailureScenarioTest {
     }
 
     @Test
-    fun goldPriceApi_zeroSilverPrice_shouldBeRejected() {
+    fun swissquoteApi_zeroSilverPrice_shouldBeRejected() {
         val json = """{"items":[{"xauPrice":4340.105,"xagPrice":0}]}"""
         val root = JSONObject(json)
         val item = root.getJSONArray("items").getJSONObject(0)
