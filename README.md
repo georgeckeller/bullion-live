@@ -100,7 +100,7 @@ Swissquote         Finnhub API          User Watchlist
 | `FetchService.kt` | Background job (60s interval) fetching all data sources |
 | `PersistentCacheManager.kt` | SharedPreferences cache, broadcasts updates on save |
 | `ApiRequestQueue.kt` | Centralized Finnhub rate limiter (60/min, 30/sec) |
-| `GoldPriceApi.kt` | Metals price client — Swissquote for spot price (XAU/XAG), Finnhub GLD/SLV ETF for daily change % |
+| `GoldPriceApi.kt` | Metals price client — Swissquote for spot price (XAU/XAG), Yahoo Finance GC=F/SI=F futures for daily change % |
 | `FinnhubApi.kt` | Crypto + stock client (Finnhub, API key required) |
 | `MetalsWidgetProvider.kt` | 2x2 home screen widget (Gold, Silver, BTC, ETH) |
 | `SingleStockWidgetProvider.kt` | 1x1 home screen widget (GOOG) |
@@ -188,7 +188,7 @@ Three-tier cache system designed for financial data freshness.
 | API | Data | Auth | Rate Limit |
 |-----|------|------|------------|
 | [Swissquote forex feed](https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD) | Gold, Silver live spot price | None | Unrestricted |
-| [Finnhub](https://finnhub.io/api/v1/quote) `GLD`, `SLV` | Gold, Silver daily change % (ETF proxy) | API key (query param) | 60/min, 30/sec (free tier) |
+| [Yahoo Finance v8](https://query1.finance.yahoo.com/v8/finance/chart/GC=F) `GC=F`, `SI=F` | Gold, Silver daily change % | None | Unofficial API (cached daily) |
 | [Finnhub](https://finnhub.io/api/v1/quote) | Crypto (BTC, ETH), Stocks, Indices | API key (query param) | 60/min, 30/sec (free tier) |
 
 ### Finnhub Rate Limit Budget
@@ -200,11 +200,12 @@ Budget: 60 calls/min (Finnhub free tier)
 
 Per FetchService cycle (every 60s):
   2 crypto calls   (BTCUSDT, ETHUSDT)
-  2 metals ETF     (GLD, SLV — daily change %)
   3 index calls    (SPY, DIA, QQQ)
   21 watchlist calls
   ─────────────────
-  28 calls/cycle = 47% utilization
+  26 calls/cycle = 43% utilization
+
+(Metals do not use Finnhub. Yahoo Finance is called only 2x per day)
 
 WebView fetches are cache-deduped (same SharedPreferences),
 so effective rate stays under 50% with ~30 calls/min buffer.
@@ -340,9 +341,8 @@ cd android && ./gradlew clean && ./gradlew assembleDebug --stacktrace
 Check that `android/local.properties` contains a valid `FINNHUB_API_KEY`. Without it, the build uses a placeholder and all Finnhub requests fail.
 
 **Metals tab shows "Error" or no change %:**
- - Verify `FINNHUB_API_KEY` is set in `android/local.properties` — it's used for both crypto/stocks AND the GLD/SLV daily change %.
- - Run `cd android && bash validate-apis.sh` to confirm all 8 sources are reachable.
- - If only change % is missing (price shows fine), Finnhub may be rate-limited; the app degrades gracefully to price-only mode.
+ - Run `cd android && bash validate-apis.sh` to confirm all sources are reachable.
+ - If only change % is missing (price shows fine), Yahoo Finance may be unreachable or returned a bad response; the app degrades gracefully to price-only mode.
 
 **Widget not updating:**
 Android battery optimization may kill the AlarmManager. The 30-minute system fallback ensures eventual updates.

@@ -2,6 +2,19 @@
 
 All notable changes to Bullion Live are documented here.
 
+## [1.5.2] - 2026-03-05
+
+### Changed
+- **Metals Change % Data Source** — replaced Finnhub GLD/SLV ETFs with Yahoo Finance `GC=F`/`SI=F` futures (chartPreviousClose)
+  - *Why:* GLD/SLV ETFs only trade 9:30AM-4PM EST. Spot metals trade 23h/day. On days where overnight rallies drove spot prices higher, the US ETF still showed a negative daily change based on 4PM close, causing the app to show red negative numbers while actual spot gold was green/up.
+  - Futures `chartPreviousClose` accurately reflects the 24h trading session.
+- **Implemented Daily Caching for Metals prevClose**
+  - Yahoo Finance is an unofficial API and will rate-limit if polled aggressively.
+  - Since `prevClose` is a static daily value, it is now fetched only **once per calendar day**.
+  - WebView caches it in `localStorage` keyed by date (`bullion_metals_prevclose_v1`).
+  - Android native layer caches it in memory (companion object) keyed by date.
+  - Finnhub rate limit budget reduced from ~28 to ~26 calls/cycle (metals no longer use Finnhub).
+
 ## [1.5.1] - 2026-03-05
 
 ### Changed
