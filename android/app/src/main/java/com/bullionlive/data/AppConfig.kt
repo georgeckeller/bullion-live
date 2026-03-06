@@ -17,9 +17,13 @@ object AppConfig {
     // Primary metals source: Swissquote public forex feed (live spot bid in USD/troy oz, no auth)
     const val SWISSQUOTE_XAU_URL = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD"
     const val SWISSQUOTE_XAG_URL = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAG/USD"
-    // Daily change %: Finnhub GLD/SLV ETF quotes via existing free key (>99.9% daily correlation to spot)
-    const val GLD_SYMBOL = "GLD"
-    const val SLV_SYMBOL = "SLV"
+    // Daily change %: Yahoo Finance GC=F/SI=F futures chartPreviousClose.
+    //   Reflects 24h trading session (Asian + European + US), NOT just US market hours.
+    //   GLD/SLV ETFs were wrong because dp% = 9:30AM-4PM only; spot trades 23h/day.
+    //   NOTE: unofficial/undocumented endpoint. No SLA. Fallback = price-only mode.
+    const val YAHOO_FINANCE_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
+    const val YAHOO_GOLD_SYMBOL = "GC=F"   // COMEX gold futures — tracks spot closely
+    const val YAHOO_SILVER_SYMBOL = "SI=F" // COMEX silver futures — tracks spot closely
     const val FINNHUB_BASE_URL = "https://finnhub.io/api/v1/quote"
 
     // ========== Network ==========
@@ -43,6 +47,7 @@ object AppConfig {
 
     // ========== Rate Limiting (Finnhub: 60/min free tier) ==========
     // Budget: ~26 calls/cycle (2 crypto + 3 indices + 21 watchlist) = ~43% utilization
+    // Metals change% now from Yahoo Finance (no Finnhub calls for metals, saves 2 calls/cycle)
     // WebView fetches are cache-deduped, so effective rate stays under 50%
     const val FINNHUB_MAX_PER_MINUTE = 60
     const val FINNHUB_MAX_PER_SECOND = 30

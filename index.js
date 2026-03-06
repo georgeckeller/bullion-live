@@ -168,6 +168,41 @@
     priceCache.metals.timestamp = Date.now();
   }
 
+  // ── Daily prevClose cache ────────────────────────────────────────────────
+  // chartPreviousClose from Yahoo Finance is a DAILY value — it doesn't change
+  // during the trading day. Cache it by date so we only call Yahoo Finance
+  // twice per calendar day (once for GC=F, once for SI=F) rather than every
+  // time the 1-minute metals cache expires (~240 calls/hour → 2 calls/day).
+  const PREVCLOSE_KEY = 'bullion_metals_prevclose_v1';
+
+  function getTodayDate() {
+    return new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  }
+
+  function getMetalsPrevClose() {
+    try {
+      const stored = localStorage.getItem(PREVCLOSE_KEY);
+      if (!stored) return null;
+      const parsed = JSON.parse(stored);
+      if (parsed.date !== getTodayDate()) return null; // stale — new day
+      return parsed; // { date, gcPrevClose, siPrevClose }
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function saveMetalsPrevClose(gcPrevClose, siPrevClose) {
+    try {
+      localStorage.setItem(PREVCLOSE_KEY, JSON.stringify({
+        date: getTodayDate(),
+        gcPrevClose,
+        siPrevClose
+      }));
+    } catch (e) {
+      console.warn('[Bullion] Failed to save metals prevClose:', e);
+    }
+  }
+
   function saveCachedCrypto(btcData, ethData) {
     // Save to native bridge
     if (hasNativeBridge()) {
@@ -371,21 +406,19 @@
       return;
     }
 
-    // ── Primary: Swissquote spot price + Finnhub GLD/SLV daily change % ──────
+    // ── Primary: Swissquote spot price + Yahoo Finance GC=F/SI=F previous close ──
     // Swissquote: free public forex feed, no auth, live spot bid price in USD/troy oz.
-    // Finnhub GLD/SLV: existing free key. ETFs track spot with >99.9% daily correlation.
-    //   We use dp (daily % change) only — NOT the ETF price itself — then back-calculate
-    //   prevClose = spotPrice / (1 + dp/100) so the app shows an accurate change amount.
+    // Yahoo Finance GC=F/SI=F (gold/silver futures): chartPreviousClose reflects the
+    //   24h trading session (Asian + European + US) — NOT just US market hours.
+    //   We use chartPreviousClose from futures to calculate daily change %, then replace
+    //   the price itself with Swissquote's live spot bid (more accurate/live).
+    //   GLD/SLV ETFs were WRONG because dp% = 9:30AM-4PM only; spot trades 23h/day.
     try {
       const swissBase = CONFIG.api.swissquote;
-      const finnhubBase = CONFIG.api.finnhub;
-      const key = CONFIG.api.finnhubKey;
 
-      const [goldResp, silverResp, gldResp, slvResp] = await Promise.all([
+      const [goldResp, silverResp] = await Promise.all([
         fetchJSON(`${swissBase}/XAU/USD`),
-        fetchJSON(`${swissBase}/XAG/USD`),
-        fetchWithTimeout(`${finnhubBase}/quote?symbol=GLD&token=${key}`),
-        fetchWithTimeout(`${finnhubBase}/quote?symbol=SLV&token=${key}`)
+        fetchJSON(`${swissBase}/XAG/USD`)
       ]);
 
       const xauPrice = goldResp?.[0]?.spreadProfilePrices?.[0]?.bid;
@@ -393,25 +426,49 @@
 
       if (!xauPrice || !xagPrice) throw new Error('Swissquote: missing price data');
 
-      // Parse Finnhub ETF responses for daily change %
-      let xauClose = xauPrice; // fallback: show 0% change if Finnhub fails
+      // prevClose: check date-keyed localStorage first. chartPreviousClose is a DAILY
+      // value — cache it for the whole calendar day. Caps Yahoo Finance at 2 calls/day.
+      let xauClose = xauPrice; // fallback = 0% change if prevClose unavailable
       let xagClose = xagPrice;
       let sourceLabel = 'Live (price only)';
 
-      if (gldResp.ok && slvResp.ok) {
-        const gldData = await gldResp.json();
-        const slvData = await slvResp.json();
+      let gcPrevClose = null;
+      let siPrevClose = null;
 
-        // dp = daily change percent from ETF; back-calculate prevClose from spot
-        if (gldData.dp && Math.abs(gldData.dp) < 20) {
-          xauClose = xauPrice / (1 + gldData.dp / 100);
-        }
-        if (slvData.dp && Math.abs(slvData.dp) < 20) {
-          xagClose = xagPrice / (1 + slvData.dp / 100);
-        }
-        sourceLabel = 'Live';
+      const cachedPrevClose = getMetalsPrevClose(); // null if stale or missing
+      if (cachedPrevClose) {
+        gcPrevClose = cachedPrevClose.gcPrevClose;
+        siPrevClose = cachedPrevClose.siPrevClose;
       } else {
-        console.warn('[Bullion] Finnhub GLD/SLV unavailable — showing price only');
+        // Today's prevClose not in cache — fetch from Yahoo Finance (happens once/day)
+        const yahooBase = 'https://query1.finance.yahoo.com/v8/finance/chart';
+        try {
+          const [gcResp, siResp] = await Promise.all([
+            fetchWithTimeout(`${yahooBase}/GC%3DF?interval=1d&range=2d`),
+            fetchWithTimeout(`${yahooBase}/SI%3DF?interval=1d&range=2d`)
+          ]);
+          if (gcResp.ok && siResp.ok) {
+            const gcData = await gcResp.json();
+            const siData = await siResp.json();
+            gcPrevClose = gcData?.chart?.result?.[0]?.meta?.chartPreviousClose ?? null;
+            siPrevClose = siData?.chart?.result?.[0]?.meta?.chartPreviousClose ?? null;
+            if (gcPrevClose && siPrevClose) {
+              saveMetalsPrevClose(gcPrevClose, siPrevClose);
+            }
+          }
+        } catch (e) {
+          console.warn('[Bullion] Yahoo Finance prevClose fetch failed:', e.message);
+        }
+      }
+
+      // Apply prevClose directly (sanity-check: must be within 10% of current spot)
+      if (gcPrevClose && gcPrevClose > 0 && Math.abs((xauPrice - gcPrevClose) / gcPrevClose) < 0.1) {
+        xauClose = gcPrevClose;
+        sourceLabel = 'Live';
+      }
+      if (siPrevClose && siPrevClose > 0 && Math.abs((xagPrice - siPrevClose) / siPrevClose) < 0.1) {
+        xagClose = siPrevClose;
+        sourceLabel = 'Live';
       }
 
       const result = {
