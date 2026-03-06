@@ -8,9 +8,15 @@
  * - Touch-enabled: swipe gestures for tab navigation (110px threshold)
  *
  * DATA SOURCES:
- * - Metals (Gold/Silver): GoldPrice.org - no auth, CORS-friendly
- *   Endpoint: data-asg.goldprice.org/dbXRates/USD
- *   Response: { items: [{ xauPrice, xagPrice, xauClose, xagClose, pcXau, pcXag }] }
+ * - Metals (Gold/Silver): Two-source strategy, zero cost:
+ *   1. Swissquote public forex feed - no auth, CORS-friendly, live spot price
+ *      Endpoint: forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD
+ *      Response: [{ spreadProfilePrices: [{ bid }] }]  (USD per troy oz)
+ *   2. Finnhub GLD/SLV ETF quotes - existing free key, daily change %
+ *      Endpoint: finnhub.io/api/v1/quote?symbol=GLD&token=KEY
+ *      Response: { c: current, pc: prevClose, dp: changePercent }
+ *      GLD and SLV track spot gold/silver with >99.9% daily % correlation.
+ *      We use dp (daily change %) only — not the ETF price itself.
  *
  * - Crypto (BTC/ETH) & Stocks: Finnhub - requires API key
  *   Endpoint: finnhub.io/api/v1/quote?symbol=X&token=KEY
@@ -39,12 +45,12 @@
 
   const CONFIG = {
     api: {
-      goldPrice: 'https://data-asg.goldprice.org/dbXRates/USD',
+      swissquote: 'https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument',
       finnhub: 'https://finnhub.io/api/v1',
       finnhubKey: 'YOUR_FINNHUB_API_KEY' // Replaced dynamically on init if native bridge is present
     },
     intervals: {
-      metals: 15000,    // 15s — GoldPriceApi, no rate limit
+      metals: 15000,    // 15s — Swissquote public feed, no rate limit
       crypto: 30000,    // 30s — Finnhub, cache-deduped with native
       stocks: 60000     // 60s — matches CACHE_FRESH_MS, 24 symbols per fetch
     },
@@ -350,7 +356,7 @@
       const item = cached.data;
       const age = Math.floor((Date.now() - cached.timestamp) / 1000);
 
-      // Convert from bridge format if needed
+      // Normalize field names (bridge format uses goldPrice/goldPreviousClose)
       const xauPrice = item.xauPrice || item.goldPrice;
       const xagPrice = item.xagPrice || item.silverPrice;
       const xauClose = item.xauClose || item.goldPreviousClose || xauPrice;
@@ -365,73 +371,101 @@
       return;
     }
 
-    const sources = [
-      {
-        name: 'GoldPrice.org',
-        url: CONFIG.api.goldPrice,
-        fetch: async (url) => {
-          const data = await fetchJSON(url);
-          if (data?.items?.[0]) {
-            const item = data.items[0];
-            return {
-              xauPrice: item.xauPrice,
-              xauClose: item.xauClose || item.xauPrice,
-              pcXau: item.pcXau || 0,
-              xagPrice: item.xagPrice,
-              xagClose: item.xagClose || item.xagPrice,
-              pcXag: item.pcXag || 0
-            };
-          }
-          throw new Error('Invalid GoldPrice.org format');
+    // ── Primary: Swissquote spot price + Finnhub GLD/SLV daily change % ──────
+    // Swissquote: free public forex feed, no auth, live spot bid price in USD/troy oz.
+    // Finnhub GLD/SLV: existing free key. ETFs track spot with >99.9% daily correlation.
+    //   We use dp (daily % change) only — NOT the ETF price itself — then back-calculate
+    //   prevClose = spotPrice / (1 + dp/100) so the app shows an accurate change amount.
+    try {
+      const swissBase = CONFIG.api.swissquote;
+      const finnhubBase = CONFIG.api.finnhub;
+      const key = CONFIG.api.finnhubKey;
+
+      const [goldResp, silverResp, gldResp, slvResp] = await Promise.all([
+        fetchJSON(`${swissBase}/XAU/USD`),
+        fetchJSON(`${swissBase}/XAG/USD`),
+        fetchWithTimeout(`${finnhubBase}/quote?symbol=GLD&token=${key}`),
+        fetchWithTimeout(`${finnhubBase}/quote?symbol=SLV&token=${key}`)
+      ]);
+
+      const xauPrice = goldResp?.[0]?.spreadProfilePrices?.[0]?.bid;
+      const xagPrice = silverResp?.[0]?.spreadProfilePrices?.[0]?.bid;
+
+      if (!xauPrice || !xagPrice) throw new Error('Swissquote: missing price data');
+
+      // Parse Finnhub ETF responses for daily change %
+      let xauClose = xauPrice; // fallback: show 0% change if Finnhub fails
+      let xagClose = xagPrice;
+      let sourceLabel = 'Live (price only)';
+
+      if (gldResp.ok && slvResp.ok) {
+        const gldData = await gldResp.json();
+        const slvData = await slvResp.json();
+
+        // dp = daily change percent from ETF; back-calculate prevClose from spot
+        if (gldData.dp && Math.abs(gldData.dp) < 20) {
+          xauClose = xauPrice / (1 + gldData.dp / 100);
         }
-      },
-      {
-        name: 'Swissquote',
-        url: 'https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/',
-        fetch: async (baseUrl) => {
-          const [goldResp, silverResp] = await Promise.all([
-            fetchJSON(baseUrl + 'XAU/USD'),
-            fetchJSON(baseUrl + 'XAG/USD')
-          ]);
-          const goldPrice = goldResp?.[0]?.spreadProfilePrices?.[0]?.bid;
-          const silverPrice = silverResp?.[0]?.spreadProfilePrices?.[0]?.bid;
-
-          if (goldPrice && silverPrice) {
-            return {
-              xauPrice: goldPrice,
-              xauClose: goldPrice, // Swissquote public doesn't easily provide prev close
-              xagPrice: silverPrice,
-              xagClose: silverPrice
-            };
-          }
-          throw new Error('Invalid Swissquote format');
+        if (slvData.dp && Math.abs(slvData.dp) < 20) {
+          xagClose = xagPrice / (1 + slvData.dp / 100);
         }
+        sourceLabel = 'Live';
+      } else {
+        console.warn('[Bullion] Finnhub GLD/SLV unavailable — showing price only');
       }
-    ];
 
-    for (const source of sources) {
-      try {
-        const result = await source.fetch(source.url);
+      const result = {
+        xauPrice,
+        xauClose,
+        xagPrice,
+        xagClose
+      };
 
-        // Save to unified cache
-        saveCachedMetals(result);
+      saveCachedMetals(result);
+      updateAssetCard('gold', xauPrice, xauClose, 2);
+      updateAssetCard('silver', xagPrice, xagClose, 2);
 
-        updateAssetCard('gold', result.xauPrice, result.xauClose, 2);
-        updateAssetCard('silver', result.xagPrice, result.xagClose, 2);
+      state.metalsLoaded = true;
+      state.lastUpdated.metals = new Date();
+      statusDot.className = 'status-dot live';
+      statusText.textContent = sourceLabel;
+      statusTimestamp.textContent = 'Updated: ' + formatTimestamp(state.lastUpdated.metals);
+      return;
 
-        state.metalsLoaded = true;
-        state.lastUpdated.metals = new Date();
-
-        statusDot.className = 'status-dot live';
-        statusText.textContent = source.name === 'GoldPrice.org' ? 'Live' : `Live (${source.name})`;
-        statusTimestamp.textContent = 'Updated: ' + formatTimestamp(state.lastUpdated.metals);
-        return; // Success
-      } catch (error) {
-        console.warn(`[Bullion] ${source.name} fetch error:`, error);
-      }
+    } catch (primaryError) {
+      console.warn('[Bullion] Primary metals fetch failed:', primaryError);
     }
 
-    // If we reach here, all sources failed
+    // ── Fallback: Swissquote price only (no change %) ──────────────────────
+    try {
+      const swissBase = CONFIG.api.swissquote;
+      const [goldResp, silverResp] = await Promise.all([
+        fetchJSON(`${swissBase}/XAU/USD`),
+        fetchJSON(`${swissBase}/XAG/USD`)
+      ]);
+
+      const xauPrice = goldResp?.[0]?.spreadProfilePrices?.[0]?.bid;
+      const xagPrice = silverResp?.[0]?.spreadProfilePrices?.[0]?.bid;
+
+      if (!xauPrice || !xagPrice) throw new Error('Swissquote fallback: missing price data');
+
+      const result = { xauPrice, xauClose: xauPrice, xagPrice, xagClose: xagPrice };
+      saveCachedMetals(result);
+      updateAssetCard('gold', xauPrice, xauPrice, 2);
+      updateAssetCard('silver', xagPrice, xagPrice, 2);
+
+      state.metalsLoaded = true;
+      state.lastUpdated.metals = new Date();
+      statusDot.className = 'status-dot live';
+      statusText.textContent = 'Live (price only)';
+      statusTimestamp.textContent = 'Updated: ' + formatTimestamp(state.lastUpdated.metals);
+      return;
+
+    } catch (fallbackError) {
+      console.warn('[Bullion] Fallback metals fetch failed:', fallbackError);
+    }
+
+    // All sources failed
     statusDot.className = 'status-dot error';
     statusText.textContent = 'Connection error';
   }
