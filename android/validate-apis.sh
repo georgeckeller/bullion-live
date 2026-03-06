@@ -2,13 +2,13 @@
 # validate-apis.sh - Pre-build API connectivity validation
 #
 # TESTS 8 DATA SOURCES:
-# 1. Gold (XAU) - GoldPrice.org
-# 2. Silver (XAG) - GoldPrice.org (same response)
-# 3. Bitcoin (BTC) - Finnhub BINANCE:BTCUSDT
-# 4. Ethereum (ETH) - Finnhub BINANCE:ETHUSDT
-# 5. S&P 500 (SPY) - Finnhub SPY
-# 6. Dow Jones (DIA) - Finnhub DIA
-# 7. Nasdaq (QQQ) - Finnhub QQQ
+# 1. Gold spot price (XAU) - Swissquote public forex feed
+# 2. Silver spot price (XAG) - Swissquote public forex feed
+# 3. Gold daily change % (GLD ETF) - Finnhub
+# 4. Silver daily change % (SLV ETF) - Finnhub
+# 5. Bitcoin (BTC) - Finnhub BINANCE:BTCUSDT
+# 6. Ethereum (ETH) - Finnhub BINANCE:ETHUSDT
+# 7. S&P 500 (SPY) - Finnhub SPY
 # 8. Stocks (AAPL) - Finnhub AAPL
 #
 # USAGE: ./validate-apis.sh
@@ -49,11 +49,11 @@ fi
 ERRORS=0
 GOLD_OK=0
 SILVER_OK=0
+GLD_OK=0
+SLV_OK=0
 BTC_OK=0
 ETH_OK=0
 SPY_OK=0
-DIA_OK=0
-QQQ_OK=0
 STOCK_OK=0
 
 is_valid_number() {
@@ -63,22 +63,20 @@ is_valid_number() {
     echo "$1" | grep -qE '^[0-9]+\.?[0-9]*$' && [ "$1" != "0" ] && [ "$1" != "0.0" ]
 }
 
-echo "[1/5] Testing GOLD (XAU) - Metals Tab..."
-METALS_RESPONSE=$(curl -s --max-time 10 "https://data-asg.goldprice.org/dbXRates/USD" 2>/dev/null || echo "CURL_FAILED")
+echo "[1/8] Testing GOLD spot price (XAU/USD) - Swissquote..."
+GOLD_RESPONSE=$(curl -s --max-time 10 "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD" 2>/dev/null || echo "CURL_FAILED")
 
-if [ "$METALS_RESPONSE" = "CURL_FAILED" ]; then
-    echo "      ERROR: Failed to connect to GoldPrice.org"
+if [ "$GOLD_RESPONSE" = "CURL_FAILED" ]; then
+    echo "      ERROR: Failed to connect to Swissquote"
     ERRORS=$((ERRORS + 1))
 else
-    GOLD_PRICE=$(echo "$METALS_RESPONSE" | grep -o '"xauPrice":[0-9.]*' | cut -d: -f2)
+    GOLD_PRICE=$(echo "$GOLD_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['spreadProfilePrices'][0]['bid'])" 2>/dev/null)
 
-    # WAF/Captcha handling - if price is empty but we got a response, it's likely a WAF block
     if [ -z "$GOLD_PRICE" ]; then
-        echo "      WARNING: Gold price not found (likely WAF/Captcha block)"
-        echo "      Proceeding with build assuming API is live for end-users."
-        GOLD_OK=1
+        echo "      ERROR: Gold price not found in Swissquote response"
+        ERRORS=$((ERRORS + 1))
     elif is_valid_number "$GOLD_PRICE"; then
-        echo "      Price: \$$GOLD_PRICE"
+        echo "      Price: \$$GOLD_PRICE/troy oz"
         GOLD_OK=1
     else
         echo "      ERROR: Gold price invalid (got: '$GOLD_PRICE')"
@@ -87,27 +85,77 @@ else
 fi
 echo ""
 
-echo "[2/5] Testing SILVER (XAG) - Metals Tab..."
-if [ "$METALS_RESPONSE" != "CURL_FAILED" ]; then
-    SILVER_PRICE=$(echo "$METALS_RESPONSE" | grep -o '"xagPrice":[0-9.]*' | cut -d: -f2)
+echo "[2/8] Testing SILVER spot price (XAG/USD) - Swissquote..."
+SILVER_RESPONSE=$(curl -s --max-time 10 "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAG/USD" 2>/dev/null || echo "CURL_FAILED")
+
+if [ "$SILVER_RESPONSE" = "CURL_FAILED" ]; then
+    echo "      ERROR: Failed to connect to Swissquote"
+    ERRORS=$((ERRORS + 1))
+else
+    SILVER_PRICE=$(echo "$SILVER_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['spreadProfilePrices'][0]['bid'])" 2>/dev/null)
 
     if [ -z "$SILVER_PRICE" ]; then
-        echo "      WARNING: Silver price not found (likely WAF/Captcha block)"
-        SILVER_OK=1
+        echo "      ERROR: Silver price not found in Swissquote response"
+        ERRORS=$((ERRORS + 1))
     elif is_valid_number "$SILVER_PRICE"; then
-        echo "      Price: \$$SILVER_PRICE"
+        echo "      Price: \$$SILVER_PRICE/troy oz"
         SILVER_OK=1
     else
         echo "      ERROR: Silver price invalid (got: '$SILVER_PRICE')"
         ERRORS=$((ERRORS + 1))
     fi
-else
-    echo "      ERROR: No metals data (API connection failed)"
-    ERRORS=$((ERRORS + 1))
 fi
 echo ""
 
-echo "[3/5] Testing BITCOIN (BTC) - Crypto Tab..."
+echo "[3/8] Testing GOLD daily change % (GLD ETF) - Finnhub..."
+GLD_RESPONSE=$(curl -s --max-time 10 "https://finnhub.io/api/v1/quote?symbol=GLD&token=$FINNHUB_KEY" 2>/dev/null || echo "CURL_FAILED")
+
+if [ "$GLD_RESPONSE" = "CURL_FAILED" ]; then
+    echo "      ERROR: Failed to connect to Finnhub"
+    ERRORS=$((ERRORS + 1))
+elif echo "$GLD_RESPONSE" | grep -q '"error"'; then
+    echo "      ERROR: Finnhub API error"
+    echo "      Response: $GLD_RESPONSE"
+    ERRORS=$((ERRORS + 1))
+else
+    GLD_DP=$(echo "$GLD_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('dp',''))" 2>/dev/null)
+    GLD_PC=$(echo "$GLD_RESPONSE" | grep -o '"pc":[0-9.]*' | cut -d: -f2)
+
+    if [ -n "$GLD_PC" ] && [ -n "$GLD_DP" ]; then
+        echo "      GLD prev close: \$$GLD_PC | Daily change: ${GLD_DP}%"
+        GLD_OK=1
+    else
+        echo "      ERROR: GLD data invalid (got: '$GLD_RESPONSE')"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+echo ""
+
+echo "[4/8] Testing SILVER daily change % (SLV ETF) - Finnhub..."
+SLV_RESPONSE=$(curl -s --max-time 10 "https://finnhub.io/api/v1/quote?symbol=SLV&token=$FINNHUB_KEY" 2>/dev/null || echo "CURL_FAILED")
+
+if [ "$SLV_RESPONSE" = "CURL_FAILED" ]; then
+    echo "      ERROR: Failed to connect to Finnhub"
+    ERRORS=$((ERRORS + 1))
+elif echo "$SLV_RESPONSE" | grep -q '"error"'; then
+    echo "      ERROR: Finnhub API error"
+    echo "      Response: $SLV_RESPONSE"
+    ERRORS=$((ERRORS + 1))
+else
+    SLV_DP=$(echo "$SLV_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('dp',''))" 2>/dev/null)
+    SLV_PC=$(echo "$SLV_RESPONSE" | grep -o '"pc":[0-9.]*' | cut -d: -f2)
+
+    if [ -n "$SLV_PC" ] && [ -n "$SLV_DP" ]; then
+        echo "      SLV prev close: \$$SLV_PC | Daily change: ${SLV_DP}%"
+        SLV_OK=1
+    else
+        echo "      ERROR: SLV data invalid (got: '$SLV_RESPONSE')"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+echo ""
+
+echo "[5/8] Testing BITCOIN (BTC) - Crypto Tab..."
 BTC_RESPONSE=$(curl -s --max-time 10 "https://finnhub.io/api/v1/quote?symbol=BINANCE:BTCUSDT&token=$FINNHUB_KEY" 2>/dev/null || echo "CURL_FAILED")
 
 if [ "$BTC_RESPONSE" = "CURL_FAILED" ]; then
@@ -131,7 +179,7 @@ else
 fi
 echo ""
 
-echo "[4/5] Testing ETHEREUM (ETH) - Crypto Tab..."
+echo "[6/8] Testing ETHEREUM (ETH) - Crypto Tab..."
 ETH_RESPONSE=$(curl -s --max-time 10 "https://finnhub.io/api/v1/quote?symbol=BINANCE:ETHUSDT&token=$FINNHUB_KEY" 2>/dev/null || echo "CURL_FAILED")
 
 if [ "$ETH_RESPONSE" = "CURL_FAILED" ]; then
@@ -155,7 +203,7 @@ else
 fi
 echo ""
 
-echo "[5/8] Testing S&P 500 (SPY) - Major Indices..."
+echo "[7/8] Testing S&P 500 (SPY) - Major Indices..."
 SPY_RESPONSE=$(curl -s --max-time 10 "https://finnhub.io/api/v1/quote?symbol=SPY&token=$FINNHUB_KEY" 2>/dev/null || echo "CURL_FAILED")
 
 if [ "$SPY_RESPONSE" = "CURL_FAILED" ]; then
@@ -172,50 +220,6 @@ else
         SPY_OK=1
     else
         echo "      ERROR: SPY price invalid (got: '$SPY_PRICE')"
-        ERRORS=$((ERRORS + 1))
-    fi
-fi
-echo ""
-
-echo "[6/8] Testing Dow Jones (DIA) - Major Indices..."
-DIA_RESPONSE=$(curl -s --max-time 10 "https://finnhub.io/api/v1/quote?symbol=DIA&token=$FINNHUB_KEY" 2>/dev/null || echo "CURL_FAILED")
-
-if [ "$DIA_RESPONSE" = "CURL_FAILED" ]; then
-    echo "      ERROR: Failed to connect to Finnhub"
-    ERRORS=$((ERRORS + 1))
-elif echo "$DIA_RESPONSE" | grep -q '"error"'; then
-    echo "      ERROR: Finnhub API error"
-    ERRORS=$((ERRORS + 1))
-else
-    DIA_PRICE=$(echo "$DIA_RESPONSE" | grep -o '"c":[0-9.]*' | cut -d: -f2)
-
-    if is_valid_number "$DIA_PRICE"; then
-        echo "      Price: \$$DIA_PRICE"
-        DIA_OK=1
-    else
-        echo "      ERROR: DIA price invalid (got: '$DIA_PRICE')"
-        ERRORS=$((ERRORS + 1))
-    fi
-fi
-echo ""
-
-echo "[7/8] Testing Nasdaq (QQQ) - Major Indices..."
-QQQ_RESPONSE=$(curl -s --max-time 10 "https://finnhub.io/api/v1/quote?symbol=QQQ&token=$FINNHUB_KEY" 2>/dev/null || echo "CURL_FAILED")
-
-if [ "$QQQ_RESPONSE" = "CURL_FAILED" ]; then
-    echo "      ERROR: Failed to connect to Finnhub"
-    ERRORS=$((ERRORS + 1))
-elif echo "$QQQ_RESPONSE" | grep -q '"error"'; then
-    echo "      ERROR: Finnhub API error"
-    ERRORS=$((ERRORS + 1))
-else
-    QQQ_PRICE=$(echo "$QQQ_RESPONSE" | grep -o '"c":[0-9.]*' | cut -d: -f2)
-
-    if is_valid_number "$QQQ_PRICE"; then
-        echo "      Price: \$$QQQ_PRICE"
-        QQQ_OK=1
-    else
-        echo "      ERROR: QQQ price invalid (got: '$QQQ_PRICE')"
         ERRORS=$((ERRORS + 1))
     fi
 fi
@@ -252,15 +256,27 @@ echo ""
 
 echo "  Metals Tab:"
 if [ $GOLD_OK -eq 1 ]; then
-    echo "    [OK] Gold (XAU)"
+    echo "    [OK] Gold spot price (Swissquote XAU/USD)"
 else
-    echo "    [FAIL] Gold (XAU)"
+    echo "    [FAIL] Gold spot price (Swissquote XAU/USD)"
 fi
 
 if [ $SILVER_OK -eq 1 ]; then
-    echo "    [OK] Silver (XAG)"
+    echo "    [OK] Silver spot price (Swissquote XAG/USD)"
 else
-    echo "    [FAIL] Silver (XAG)"
+    echo "    [FAIL] Silver spot price (Swissquote XAG/USD)"
+fi
+
+if [ $GLD_OK -eq 1 ]; then
+    echo "    [OK] Gold daily change % (Finnhub GLD)"
+else
+    echo "    [FAIL] Gold daily change % (Finnhub GLD)"
+fi
+
+if [ $SLV_OK -eq 1 ]; then
+    echo "    [OK] Silver daily change % (Finnhub SLV)"
+else
+    echo "    [FAIL] Silver daily change % (Finnhub SLV)"
 fi
 
 echo ""
@@ -285,18 +301,6 @@ else
     echo "    [FAIL] S&P 500 (SPY)"
 fi
 
-if [ $DIA_OK -eq 1 ]; then
-    echo "    [OK] Dow Jones (DIA)"
-else
-    echo "    [FAIL] Dow Jones (DIA)"
-fi
-
-if [ $QQQ_OK -eq 1 ]; then
-    echo "    [OK] Nasdaq (QQQ)"
-else
-    echo "    [FAIL] Nasdaq (QQQ)"
-fi
-
 echo ""
 echo "  Watchlist:"
 if [ $STOCK_OK -eq 1 ]; then
@@ -308,7 +312,7 @@ fi
 echo ""
 echo "============================================"
 
-PASSED=$((GOLD_OK + SILVER_OK + BTC_OK + ETH_OK + SPY_OK + DIA_OK + QQQ_OK + STOCK_OK))
+PASSED=$((GOLD_OK + SILVER_OK + GLD_OK + SLV_OK + BTC_OK + ETH_OK + SPY_OK + STOCK_OK))
 
 if [ $PASSED -eq 8 ]; then
     echo "  VALIDATION PASSED: 8/8 data sources OK"
