@@ -33,10 +33,11 @@ if [ -z "$DRIVE_FOLDER_ID" ]; then
     exit 1
 fi
 
-SERVICE_ACCOUNT_KEY="$PROJECT_ROOT/service-accounts/drive-service-account.json"
-if [ ! -f "$SERVICE_ACCOUNT_KEY" ]; then
-    echo "ERROR: Service account key not found at $SERVICE_ACCOUNT_KEY"
-    echo "Run: ./create-drive-service-account-key.sh"
+# Get gcloud access token (requires: gcloud auth login)
+GCLOUD_TOKEN=$(gcloud auth print-access-token 2>/dev/null)
+if [ -z "$GCLOUD_TOKEN" ]; then
+    echo "ERROR: gcloud not authenticated. Run:"
+    echo "  gcloud auth login"
     exit 1
 fi
 
@@ -73,64 +74,61 @@ echo "  File: $APK_FILENAME ($APK_SIZE)"
 echo "  Folder: $DRIVE_FOLDER_ID"
 echo ""
 
-# Step 2: Upload via Python (google-api-python-client)
+# Step 2: Upload via Python using gcloud auth token
 python3 - <<PYTHON
-import sys
-import os
+import os, json, sys
 
 try:
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload
+    import requests
 except ImportError:
-    print("ERROR: Missing dependencies. Run:")
-    print("  pip3 install google-auth google-auth-httplib2 google-api-python-client")
+    print("ERROR: requests not installed. Run: pip3 install requests")
     sys.exit(1)
 
-SERVICE_ACCOUNT_FILE = "$SERVICE_ACCOUNT_KEY"
 FOLDER_ID = "$DRIVE_FOLDER_ID"
 APK_PATH = "$APK_PATH"
 APK_FILENAME = "$APK_FILENAME"
+TOKEN = "$GCLOUD_TOKEN"
 
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+headers = {"Authorization": f"Bearer {TOKEN}"}
+mime = "application/vnd.android.package-archive"
 
-creds = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES
+# Check if file already exists in folder
+r = requests.get(
+    "https://www.googleapis.com/drive/v3/files",
+    headers=headers,
+    params={"q": f"name='{APK_FILENAME}' and '{FOLDER_ID}' in parents and trashed=false", "fields": "files(id,name)"}
 )
+files = r.json().get("files", [])
 
-service = build("drive", "v3", credentials=creds, cache_discovery=False)
+with open(APK_PATH, "rb") as f:
+    apk_data = f.read()
 
-# Check if file already exists in folder (to update instead of duplicate)
-results = service.files().list(
-    q=f"name='{APK_FILENAME}' and '{FOLDER_ID}' in parents and trashed=false",
-    fields="files(id, name)"
-).execute()
-existing = results.get("files", [])
-
-media = MediaFileUpload(APK_PATH, mimetype="application/vnd.android.package-archive", resumable=True)
-
-if existing:
-    file_id = existing[0]["id"]
-    file = service.files().update(
-        fileId=file_id,
-        media_body=media
-    ).execute()
-    print(f"✅ Updated existing file: {APK_FILENAME}")
-    print(f"   Drive ID: {file.get('id')}")
+if files:
+    file_id = files[0]["id"]
+    r = requests.patch(
+        f"https://www.googleapis.com/upload/drive/v3/files/{file_id}",
+        headers={**headers, "Content-Type": mime},
+        params={"uploadType": "media"},
+        data=apk_data
+    )
+    print(f"✅ Updated existing file: {APK_FILENAME} (HTTP {r.status_code})")
 else:
-    file_metadata = {
-        "name": APK_FILENAME,
-        "parents": [FOLDER_ID]
-    }
-    file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id, name"
-    ).execute()
-    print(f"✅ Uploaded new file: {APK_FILENAME}")
-    print(f"   Drive ID: {file.get('id')}")
+    meta = json.dumps({"name": APK_FILENAME, "parents": [FOLDER_ID]})
+    boundary = "bullionlive_apk_boundary"
+    body = (
+        f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{meta}\r\n"
+        f"--{boundary}\r\nContent-Type: {mime}\r\n\r\n"
+    ).encode() + apk_data + f"\r\n--{boundary}--".encode()
+    r = requests.post(
+        "https://www.googleapis.com/upload/drive/v3/files",
+        headers={**headers, "Content-Type": f"multipart/related; boundary={boundary}"},
+        params={"uploadType": "multipart"},
+        data=body
+    )
+    result = r.json()
+    print(f"✅ Uploaded new file: {APK_FILENAME} (ID: {result.get('id')})") 
 
-print(f"   Drive folder: https://drive.google.com/drive/folders/{FOLDER_ID}")
+print(f"   https://drive.google.com/drive/folders/{FOLDER_ID}")
 PYTHON
 
 echo ""
