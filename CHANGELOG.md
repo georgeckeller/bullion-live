@@ -2,6 +2,19 @@
 
 All notable changes to Bullion Live are documented here.
 
+## [1.5.1] - 2026-03-05
+
+### Changed
+- **Metals API overhaul** — replaced GoldPrice.org (blocked by Cloudflare WAF, HTTP 403 since March 2026) with a zero-cost two-source strategy:
+  - Spot price: Swissquote public forex feed (XAU/USD, XAG/USD) — no auth, no rate limit
+  - Daily change %: Finnhub GLD/SLV ETF `dp` field — back-calculated prevClose as `spotPrice / (1 + dp/100)`
+  - Degraded to price-only mode if Finnhub unavailable (no crash)
+- Updated `validate-apis.sh` to test new 8-source config (Swissquote XAU + XAG, Finnhub GLD + SLV, BTC, ETH, SPY, AAPL)
+- Removed DIA/QQQ from validate-apis.sh (indices still fetched by app, just not tested separately)
+
+### Added
+- `android/upload-apk.sh` — build + Google Drive upload script using `gcloud auth print-access-token`. Handles update-vs-create, no duplicates. Requires `gcloud auth login`.
+
 ## [1.5.0] - 2026-02-24
 
 ### Added

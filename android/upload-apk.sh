@@ -1,20 +1,18 @@
 #!/bin/bash
 # upload-apk.sh - Build debug APK and upload to Google Drive
 #
-# USAGE: ./upload-apk.sh [apk_path]
-#
-# If apk_path is omitted, builds a fresh debug APK first.
+# USAGE:
+#   ./upload-apk.sh              # builds fresh debug APK, then uploads
+#   ./upload-apk.sh <apk_path>   # uploads an existing APK file
 #
 # REQUIRES:
-#   - DRIVE_FOLDER_ID  env var (or in ~/.bullion-drive-config.sh)
-#   - python3 + google-auth + google-api-python-client packages
-#   - Service account key at ../service-accounts/drive-service-account.json
-#     (run create-drive-service-account-key.sh once to create it)
+#   - DRIVE_FOLDER_ID env var (loaded from ~/.bullion-drive-config.sh)
+#   - gcloud CLI authenticated: gcloud auth login
+#   - python3 + requests:       pip3 install requests
 #
-# SETUP (one-time):
-#   pip3 install --quiet google-auth google-auth-httplib2 google-api-python-client
-#   ./create-drive-service-account-key.sh   # creates the service account key
-#   ./setup-drive-folder.sh                 # notes the DRIVE_FOLDER_ID
+# CONFIG (stored locally, never committed):
+#   ~/.bullion-drive-config.sh should contain:
+#     export DRIVE_FOLDER_ID="1jJ8LSufTe8s626gkm737HAEyBf438IIR"
 
 set -e
 

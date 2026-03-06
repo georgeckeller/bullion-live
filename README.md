@@ -84,8 +84,10 @@ The app is a Kotlin Android shell wrapping a single-page HTML/JS/CSS app in a We
 └─────────────────────────────────────────────────────────┘
 │                        │                        │
 ▼                        ▼                        ▼
-GoldPrice.org       Finnhub API          User Watchlist
-(no auth)         (API key in            (localStorage)
+Swissquote         Finnhub API          User Watchlist
+(metals spot,       (GLD/SLV dp%,       (localStorage)
+ no auth)          crypto, stocks,
+                   API key in
                    BuildConfig)
 ```
 
@@ -98,7 +100,7 @@ GoldPrice.org       Finnhub API          User Watchlist
 | `FetchService.kt` | Background job (60s interval) fetching all data sources |
 | `PersistentCacheManager.kt` | SharedPreferences cache, broadcasts updates on save |
 | `ApiRequestQueue.kt` | Centralized Finnhub rate limiter (60/min, 30/sec) |
-| `GoldPriceApi.kt` | Metals price client (GoldPrice.org, no auth required) |
+| `GoldPriceApi.kt` | Metals price client — Swissquote for spot price (XAU/XAG), Finnhub GLD/SLV ETF for daily change % |
 | `FinnhubApi.kt` | Crypto + stock client (Finnhub, API key required) |
 | `MetalsWidgetProvider.kt` | 2x2 home screen widget (Gold, Silver, BTC, ETH) |
 | `SingleStockWidgetProvider.kt` | 1x1 home screen widget (GOOG) |
@@ -185,8 +187,9 @@ Three-tier cache system designed for financial data freshness.
 
 | API | Data | Auth | Rate Limit |
 |-----|------|------|------------|
-| [GoldPrice.org](https://data-asg.goldprice.org/dbXRates/USD) | Gold, Silver spot prices | None | Unrestricted |
-| [Finnhub](https://finnhub.io/api/v1/quote) | Crypto (BTC, ETH), Stocks | API key (query param) | 60/min, 30/sec (free tier) |
+| [Swissquote forex feed](https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD) | Gold, Silver live spot price | None | Unrestricted |
+| [Finnhub](https://finnhub.io/api/v1/quote) `GLD`, `SLV` | Gold, Silver daily change % (ETF proxy) | API key (query param) | 60/min, 30/sec (free tier) |
+| [Finnhub](https://finnhub.io/api/v1/quote) | Crypto (BTC, ETH), Stocks, Indices | API key (query param) | 60/min, 30/sec (free tier) |
 
 ### Finnhub Rate Limit Budget
 
@@ -197,10 +200,11 @@ Budget: 60 calls/min (Finnhub free tier)
 
 Per FetchService cycle (every 60s):
   2 crypto calls   (BTCUSDT, ETHUSDT)
+  2 metals ETF     (GLD, SLV — daily change %)
   3 index calls    (SPY, DIA, QQQ)
   21 watchlist calls
   ─────────────────
-  26 calls/cycle = 43% utilization
+  28 calls/cycle = 47% utilization
 
 WebView fetches are cache-deduped (same SharedPreferences),
 so effective rate stays under 50% with ~30 calls/min buffer.
@@ -221,7 +225,7 @@ so effective rate stays under 50% with ~30 calls/min buffer.
 
 | Tab | Interval | Rationale |
 |-----|----------|-----------|
-| Metals | 15s | GoldPrice.org, no rate limit |
+| Metals | 15s | Swissquote public feed, no rate limit |
 | Crypto | 30s | Finnhub, cache-deduped with native |
 | Markets | 60s | Matches cache TTL; 24 symbols per fetch |
 
@@ -304,6 +308,17 @@ cp index.html index.js android/app/src/main/assets/
 cd android && ./gradlew assembleDebug
 ```
 
+### Deploy APK to Google Drive
+
+```bash
+source ~/.bullion-drive-config.sh
+cd android && ./upload-apk.sh          # builds fresh APK then uploads
+# or to upload an existing APK:
+./android/upload-apk.sh path/to/app-debug.apk
+```
+Requires: `gcloud auth login` (already configured on this machine).
+The `DRIVE_FOLDER_ID` is loaded from `~/.bullion-drive-config.sh` — not in git.
+
 ### Bump Version
 
 Edit `android/app/build.gradle.kts`:
@@ -323,6 +338,11 @@ cd android && ./gradlew clean && ./gradlew assembleDebug --stacktrace
 
 **All tabs show "Error":**
 Check that `android/local.properties` contains a valid `FINNHUB_API_KEY`. Without it, the build uses a placeholder and all Finnhub requests fail.
+
+**Metals tab shows "Error" or no change %:**
+ - Verify `FINNHUB_API_KEY` is set in `android/local.properties` — it's used for both crypto/stocks AND the GLD/SLV daily change %.
+ - Run `cd android && bash validate-apis.sh` to confirm all 8 sources are reachable.
+ - If only change % is missing (price shows fine), Finnhub may be rate-limited; the app degrades gracefully to price-only mode.
 
 **Widget not updating:**
 Android battery optimization may kill the AlarmManager. The 30-minute system fallback ensures eventual updates.
